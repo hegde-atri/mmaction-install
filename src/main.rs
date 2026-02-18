@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -16,10 +16,17 @@ const WHEELHOUSE: &str = ".wheelhouse";
 const PYTHON_BIN: &str = ".venv/bin/python";
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Install mmaction stack with local wheel builds")]
+#[command(name = "setup", author, version, about = "Install mmaction stack with local wheel builds and run uv sync")]
 struct Cli {
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, help = "Show command output while running setup")]
     debug: bool,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Delete .wheelhouse, .mmaction2, .mmengine, and .mmcv before reinstalling"
+    )]
+    purge: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -42,28 +49,50 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     let app = App { debug: cli.debug };
+    let total_steps = if cli.purge { 9 } else { 8 };
+    let mut step = 1;
 
     print_header(cli.debug);
 
-    run_step(1, 8, "Ensuring wheelhouse directory", cli.debug, || {
+    if cli.purge {
+        run_step(step, total_steps, "Purging mmaction cache directories", cli.debug, || {
+            purge_cache_dirs()
+        })?;
+        step += 1;
+    }
+
+    run_step(step, total_steps, "Ensuring wheelhouse directory", cli.debug, || {
         fs::create_dir_all(WHEELHOUSE).context("failed to create .wheelhouse directory")
     })?;
+    step += 1;
 
-    run_step(2, 8, "Checking uv availability", cli.debug, check_uv)?;
-    run_step(3, 8, "Ensuring Python virtual environment", cli.debug, || {
+    run_step(step, total_steps, "Checking uv availability", cli.debug, check_uv)?;
+    step += 1;
+
+    run_step(step, total_steps, "Ensuring Python virtual environment", cli.debug, || {
         ensure_venv(&app)
     })?;
-    run_step(4, 8, "Ensuring pip tooling", cli.debug, || ensure_pip_tooling(&app))?;
-    run_step(5, 8, "Building/installing mmcv", cli.debug, || {
+    step += 1;
+
+    run_step(step, total_steps, "Ensuring pip tooling", cli.debug, || ensure_pip_tooling(&app))?;
+    step += 1;
+
+    run_step(step, total_steps, "Building/installing mmcv", cli.debug, || {
         build_and_install_mmcv(&app)
     })?;
-    run_step(6, 8, "Building/installing mmaction2", cli.debug, || {
+    step += 1;
+
+    run_step(step, total_steps, "Building/installing mmaction2", cli.debug, || {
         build_and_install_mmaction2(&app)
     })?;
-    run_step(7, 8, "Building/installing mmengine", cli.debug, || {
+    step += 1;
+
+    run_step(step, total_steps, "Building/installing mmengine", cli.debug, || {
         build_and_install_mmengine(&app)
     })?;
-    run_step(8, 8, "Running uv sync", true, || run_uv_sync(&app))?;
+    step += 1;
+
+    run_step(step, total_steps, "Running uv sync", true, || run_uv_sync(&app))?;
 
     println!(
         "{} {}",
@@ -77,8 +106,8 @@ fn run() -> Result<()> {
 fn print_header(debug: bool) {
     println!(
         "{} {}",
-        style("mmaction-install").cyan().bold(),
-        style("(Rust CLI)").dim()
+        style("./setup").cyan().bold(),
+        style("CLI that installs mmaction stack with local wheel builds and runs uv sync").dim()
     );
     println!(
         "{} {}",
@@ -95,6 +124,8 @@ fn run_step<F>(index: usize, total: usize, name: &str, debug: bool, f: F) -> Res
 where
     F: FnOnce() -> Result<()>,
 {
+    let started_at = Instant::now();
+
     if debug {
         println!(
             "{} [{index}/{total}] {}",
@@ -103,50 +134,73 @@ where
         );
         return match f() {
             Ok(()) => {
+                let elapsed = format_elapsed(started_at.elapsed());
                 println!(
-                    "{} [{index}/{total}] {}",
+                    "{} [{index}/{total}] {} {}",
                     style("✔").green().bold(),
-                    style(name).green()
+                    style(name).green(),
+                    style(format!("({elapsed})")).dim()
                 );
                 Ok(())
             }
             Err(error) => {
+                let elapsed = format_elapsed(started_at.elapsed());
                 println!(
-                    "{} [{index}/{total}] {}",
+                    "{} [{index}/{total}] {} {}",
                     style("✖").red().bold(),
-                    style(name).red()
+                    style(name).red(),
+                    style(format!("({elapsed})")).dim()
                 );
                 Err(error).with_context(|| format!("step failed: {name}"))
             }
         };
     }
 
+    let tick_set = &[
+        "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂",
+    ];
+
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
-        ProgressStyle::with_template("{spinner:.cyan} {msg}")
+        ProgressStyle::with_template("{spinner:.cyan.bold} {prefix:.dim} {msg} {elapsed_precise:.dim}")
             .expect("valid spinner template")
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+            .tick_strings(tick_set),
     );
-    spinner.enable_steady_tick(Duration::from_millis(100));
-    spinner.set_message(format!("[{index}/{total}] {name}"));
+    spinner.enable_steady_tick(Duration::from_millis(90));
+    spinner.set_prefix(format!("[{index}/{total}]"));
+    spinner.set_message(name.to_string());
 
     match f() {
         Ok(()) => {
+            let elapsed = format_elapsed(started_at.elapsed());
             spinner.finish_with_message(format!(
-                "{} [{index}/{total}] {}",
+                "{} [{index}/{total}] {} {}",
                 style("✔").green().bold(),
-                style(name).green()
+                style(name).green(),
+                style(format!("({elapsed})")).dim()
             ));
             Ok(())
         }
         Err(error) => {
+            let elapsed = format_elapsed(started_at.elapsed());
             spinner.finish_with_message(format!(
-                "{} [{index}/{total}] {}",
+                "{} [{index}/{total}] {} {}",
                 style("✖").red().bold(),
-                style(name).red()
+                style(name).red(),
+                style(format!("({elapsed})")).dim()
             ));
             Err(error).with_context(|| format!("step failed: {name}"))
         }
+    }
+}
+
+fn format_elapsed(duration: Duration) -> String {
+    if duration.as_secs() < 60 {
+        format!("{:.1}s", duration.as_secs_f32())
+    } else {
+        let mins = duration.as_secs() / 60;
+        let secs = duration.as_secs() % 60;
+        format!("{mins}m {secs}s")
     }
 }
 
@@ -419,6 +473,13 @@ fn remove_dir_if_exists(path: &str) -> Result<()> {
     if dir.exists() {
         fs::remove_dir_all(&dir)
             .with_context(|| format!("failed to remove directory: {}", dir.display()))?;
+    }
+    Ok(())
+}
+
+fn purge_cache_dirs() -> Result<()> {
+    for path in [WHEELHOUSE, ".mmaction2", ".mmengine", ".mmcv"] {
+        remove_dir_if_exists(path)?;
     }
     Ok(())
 }
