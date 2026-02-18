@@ -1,6 +1,6 @@
 # mmaction-install
 
-Rust CLI installer that replicates the behavior of `setup.sh` for installing:
+This is a installer helper for the following libraries in a `uv` python project.
 
 - `mmcv==2.1.0`
 - `mmaction2==1.2.0`
@@ -24,8 +24,8 @@ The CLI follows the same high-level flow as `setup.sh`:
 ## Output behavior
 
 - Default mode (no flags):
-  - Shows pretty step progress (spinner + colored status).
-  - Hides command stdout/stderr for all commands **except** `uv sync`.
+  - Shows step progress.
+  - Hides command stdout/stderr for all commands **except** final `uv sync`.
   - Shows captured stdout/stderr if a hidden command fails.
 - Debug mode (`--debug`):
   - Streams stdout/stderr for all commands.
@@ -50,7 +50,7 @@ cargo build --release
 Binary path:
 
 ```bash
-target/release/mmaction-install
+target/release/setup
 ```
 
 ## Usage
@@ -58,31 +58,31 @@ target/release/mmaction-install
 Run with default (quiet) output:
 
 ```bash
-./target/release/mmaction-install
+./target/release/setup
 ```
 
 Run with full command output:
 
 ```bash
-./target/release/mmaction-install --debug
+./target/release/setup --debug
 ```
 
 Purge local cache/repos and force rebuild/reinstall:
 
 ```bash
-./target/release/mmaction-install --purge
+./target/release/setup --purge
 ```
 
 Use both flags together:
 
 ```bash
-./target/release/mmaction-install --purge --debug
+./target/release/setup --purge --debug
 ```
 
 Show help:
 
 ```bash
-./target/release/mmaction-install --help
+./target/release/setup --help
 ```
 
 `--purge` removes these directories before installation:
