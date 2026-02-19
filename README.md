@@ -13,7 +13,7 @@ It builds local wheels into `.wheelhouse`, installs from that local wheelhouse, 
 The CLI follows the same high-level flow as `setup.sh`:
 
 1. Creates `.wheelhouse` if missing.
-2. Verifies `uv` is installed.
+2. Ensures `uv` is installed (auto-installs via official installer if missing).
 3. Creates `.venv` with Python 3.12 if `.venv/bin/python` does not exist.
 4. Ensures `pip`, `setuptools<81`, and `wheel` are available in the venv.
 5. For each package (`mmcv`, `mmaction2`, `mmengine`):
@@ -35,11 +35,11 @@ The CLI follows the same high-level flow as `setup.sh`:
 
 - Linux/macOS shell environment
 - Rust toolchain (`cargo`)
-- `uv` available on `PATH`
+- `curl` or `wget` available on `PATH` (used to auto-install `uv` if missing)
 - `git` available on `PATH`
 - Network access to clone OpenMMLab repositories
 
-> Note: the installer explicitly checks `uv`. Other missing tools will fail when their command is reached.
+> Note: if `uv` is installed during the run, the installer updates PATH for the current process. If `uv` still cannot be resolved, source your shell rc file (for example, `source ~/.bashrc` or `source ~/.zshrc`) or add `~/.local/bin` to PATH.
 
 ## Build
 
@@ -92,16 +92,9 @@ Show help:
 - `.mmengine`
 - `.mmcv`
 
-## Notes on parity with `setup.sh`
-
-- Uses the same package versions and installation order.
-- Uses local wheelhouse checks before cloning/building.
-- Applies source patches needed for `mmaction2`/`mmengine` wheel builds.
-- Keeps final `uv sync` output visible in both default and debug modes.
-
 ## Troubleshooting
 
-- If you see `uv is required...`, install `uv` first:
-  - https://docs.astral.sh/uv/getting-started/installation/
+- If auto-install cannot run, ensure either `curl` or `wget` is installed.
+- If `uv` was installed but still not found, source your shell rc (`~/.bashrc`/`~/.zshrc`) or add `~/.local/bin` to PATH.
 - If a command fails in default mode, the CLI prints captured stdout/stderr for that failed command.
 - If you need full live logs for everything, rerun with `--debug`.

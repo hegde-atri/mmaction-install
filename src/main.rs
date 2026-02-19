@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -66,7 +67,9 @@ fn run() -> Result<()> {
     })?;
     step += 1;
 
-    run_step(step, total_steps, "Checking uv availability", cli.debug, check_uv)?;
+    run_step(step, total_steps, "Ensuring uv availability", cli.debug, || {
+        ensure_uv(&app)
+    })?;
     step += 1;
 
     run_step(step, total_steps, "Ensuring Python virtual environment", cli.debug, || {
@@ -204,19 +207,108 @@ fn format_elapsed(duration: Duration) -> String {
     }
 }
 
-fn check_uv() -> Result<()> {
-    let status = Command::new("uv")
+fn ensure_uv(app: &App) -> Result<()> {
+    if uv_is_available() {
+        return Ok(());
+    }
+
+    for candidate_dir in uv_candidate_dirs() {
+        if candidate_dir.join("uv").exists() {
+            prepend_path_dir(&candidate_dir)?;
+            if uv_is_available() {
+                return Ok(());
+            }
+        }
+    }
+
+    if command_exists("curl") {
+        let mut command = Command::new("sh");
+        command.args(["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"]);
+        run_command(app, "install uv", command, OutputMode::Quiet)?;
+    } else if command_exists("wget") {
+        let mut command = Command::new("sh");
+        command.args(["-c", "wget -qO- https://astral.sh/uv/install.sh | sh"]);
+        run_command(app, "install uv", command, OutputMode::Quiet)?;
+    } else {
+        bail!(
+            "uv is missing and cannot be auto-installed because neither curl nor wget is available"
+        );
+    }
+
+    for candidate_dir in uv_candidate_dirs() {
+        if candidate_dir.join("uv").exists() {
+            prepend_path_dir(&candidate_dir)?;
+        }
+    }
+
+    if uv_is_available() {
+        return Ok(());
+    }
+
+    bail!(
+        "uv installation completed but `uv` is still not on PATH. Try sourcing your shell rc (for example `source ~/.bashrc` or `source ~/.zshrc`) or add ~/.local/bin to PATH"
+    );
+}
+
+fn uv_is_available() -> bool {
+    Command::new("uv")
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status();
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
 
-    match status {
-        Ok(exit) if exit.success() => Ok(()),
-        _ => bail!(
-            "uv is required. Install it from https://docs.astral.sh/uv/getting-started/installation/"
-        ),
+fn command_exists(name: &str) -> bool {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return false;
+    };
+
+    std::env::split_paths(&path_var).any(|dir| {
+        let candidate = dir.join(name);
+        if !candidate.is_file() {
+            return false;
+        }
+        fs::metadata(candidate)
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    })
+}
+
+fn uv_candidate_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Some(home) = std::env::var_os("HOME") {
+        let home_path = PathBuf::from(home);
+        dirs.push(home_path.join(".local/bin"));
+        dirs.push(home_path.join(".cargo/bin"));
     }
+
+    dirs
+}
+
+fn prepend_path_dir(dir: &Path) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+
+    let existing = std::env::var_os("PATH").unwrap_or_default();
+    let already_present = std::env::split_paths(&existing).any(|path| path == dir);
+    if already_present {
+        return Ok(());
+    }
+
+    let mut updated_paths = Vec::new();
+    updated_paths.push(dir.to_path_buf());
+    updated_paths.extend(std::env::split_paths(&existing));
+    let joined = std::env::join_paths(updated_paths).context("failed to build updated PATH")?;
+
+    unsafe {
+        std::env::set_var("PATH", &joined);
+    }
+
+    Ok(())
 }
 
 fn ensure_venv(app: &App) -> Result<()> {
