@@ -14,12 +14,12 @@ The CLI follows the same high-level flow as `setup.sh`:
 
 1. Creates `.wheelhouse` if missing.
 2. Ensures `uv` is installed (auto-installs via official installer if missing).
-3. Creates `.venv` with Python 3.12 if `.venv/bin/python` does not exist.
+3. Creates a virtual environment with Python 3.12 if `<venv>/bin/python` does not exist (`<venv>` defaults to `.venv`).
 4. Ensures `pip`, `setuptools<81`, and `wheel` are available in the venv.
 5. For each package (`mmcv`, `mmaction2`, `mmengine`):
    - If a matching wheel is missing in `.wheelhouse`, shallow-clones the tagged repo and builds a wheel.
    - Installs from `.wheelhouse` with `uv pip install --no-index --find-links`.
-6. Runs `uv sync`.
+6. Runs `uv sync` by default, or `uv sync --active` when `--venv` is provided.
 
 ## Output behavior
 
@@ -78,6 +78,19 @@ Use both flags together:
 ```bash
 ./target/release/setup --purge --debug
 ```
+
+Use a custom virtual environment path (relative or absolute):
+
+```bash
+./target/release/setup --venv .venvs/mmaction
+./target/release/setup --venv /opt/envs/mmaction
+```
+
+When `--venv` is provided:
+
+- The path is resolved from the current working directory if relative.
+- The virtual environment is auto-created at that path when missing.
+- The installer sets `VIRTUAL_ENV` internally and runs `uv sync --active`.
 
 Show help:
 

@@ -14,12 +14,20 @@ const MMC_VERSION: &str = "2.1.0";
 const MMACTION_VERSION: &str = "1.2.0";
 const MMENGINE_VERSION: &str = "0.10.7";
 const WHEELHOUSE: &str = ".wheelhouse";
-const PYTHON_BIN: &str = ".venv/bin/python";
 
 #[derive(Parser, Debug)]
-#[command(name = "setup", author, version, about = "Install mmaction stack with local wheel builds and run uv sync")]
+#[command(
+    name = "setup",
+    author,
+    version,
+    about = "Install mmaction stack with local wheel builds and run uv sync"
+)]
 struct Cli {
-    #[arg(long, default_value_t = false, help = "Show command output while running setup")]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Show command output while running setup"
+    )]
     debug: bool,
 
     #[arg(
@@ -28,6 +36,13 @@ struct Cli {
         help = "Delete .wheelhouse, .mmaction2, .mmengine, and .mmcv before reinstalling"
     )]
     purge: bool,
+
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Virtual environment path for uv (relative or absolute)"
+    )]
+    venv: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy)]
@@ -38,6 +53,14 @@ enum OutputMode {
 
 struct App {
     debug: bool,
+    venv_dir: PathBuf,
+    venv_was_provided: bool,
+}
+
+impl App {
+    fn python_bin(&self) -> PathBuf {
+        self.venv_dir.join("bin/python")
+    }
 }
 
 fn main() {
@@ -49,53 +72,90 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let app = App { debug: cli.debug };
+    let (venv_dir, venv_was_provided) = resolve_venv_path(cli.venv)?;
+    let app = App {
+        debug: cli.debug,
+        venv_dir,
+        venv_was_provided,
+    };
     let total_steps = if cli.purge { 9 } else { 8 };
     let mut step = 1;
 
-    print_header(cli.debug);
+    print_header(&app);
 
     if cli.purge {
-        run_step(step, total_steps, "Purging mmaction cache directories", cli.debug, || {
-            purge_cache_dirs()
-        })?;
+        run_step(
+            step,
+            total_steps,
+            "Purging mmaction cache directories",
+            cli.debug,
+            || purge_cache_dirs(),
+        )?;
         step += 1;
     }
 
-    run_step(step, total_steps, "Ensuring wheelhouse directory", cli.debug, || {
-        fs::create_dir_all(WHEELHOUSE).context("failed to create .wheelhouse directory")
+    run_step(
+        step,
+        total_steps,
+        "Ensuring wheelhouse directory",
+        cli.debug,
+        || fs::create_dir_all(WHEELHOUSE).context("failed to create .wheelhouse directory"),
+    )?;
+    step += 1;
+
+    run_step(
+        step,
+        total_steps,
+        "Ensuring uv availability",
+        cli.debug,
+        || ensure_uv(&app),
+    )?;
+    step += 1;
+
+    run_step(
+        step,
+        total_steps,
+        "Ensuring Python virtual environment",
+        cli.debug,
+        || ensure_venv(&app),
+    )?;
+    step += 1;
+
+    run_step(step, total_steps, "Ensuring pip tooling", cli.debug, || {
+        ensure_pip_tooling(&app)
     })?;
     step += 1;
 
-    run_step(step, total_steps, "Ensuring uv availability", cli.debug, || {
-        ensure_uv(&app)
+    run_step(
+        step,
+        total_steps,
+        "Building/installing mmcv",
+        cli.debug,
+        || build_and_install_mmcv(&app),
+    )?;
+    step += 1;
+
+    run_step(
+        step,
+        total_steps,
+        "Building/installing mmaction2",
+        cli.debug,
+        || build_and_install_mmaction2(&app),
+    )?;
+    step += 1;
+
+    run_step(
+        step,
+        total_steps,
+        "Building/installing mmengine",
+        cli.debug,
+        || build_and_install_mmengine(&app),
+    )?;
+    step += 1;
+
+    run_step(step, total_steps, "Running uv sync", true, || {
+        run_uv_sync(&app)
     })?;
-    step += 1;
-
-    run_step(step, total_steps, "Ensuring Python virtual environment", cli.debug, || {
-        ensure_venv(&app)
-    })?;
-    step += 1;
-
-    run_step(step, total_steps, "Ensuring pip tooling", cli.debug, || ensure_pip_tooling(&app))?;
-    step += 1;
-
-    run_step(step, total_steps, "Building/installing mmcv", cli.debug, || {
-        build_and_install_mmcv(&app)
-    })?;
-    step += 1;
-
-    run_step(step, total_steps, "Building/installing mmaction2", cli.debug, || {
-        build_and_install_mmaction2(&app)
-    })?;
-    step += 1;
-
-    run_step(step, total_steps, "Building/installing mmengine", cli.debug, || {
-        build_and_install_mmengine(&app)
-    })?;
-    step += 1;
-
-    run_step(step, total_steps, "Running uv sync", true, || run_uv_sync(&app))?;
 
     println!(
         "{} {}",
@@ -106,7 +166,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn print_header(debug: bool) {
+fn print_header(app: &App) {
     println!(
         "{} {}",
         style("./setup").cyan().bold(),
@@ -115,11 +175,17 @@ fn print_header(debug: bool) {
     println!(
         "{} {}",
         style("•").cyan(),
-        if debug {
+        if app.debug {
             style("Debug output: enabled").yellow().to_string()
         } else {
             style("Debug output: disabled").dim().to_string()
         }
+    );
+    println!(
+        "{} {} {}",
+        style("•").cyan(),
+        style("Virtual env:").dim(),
+        style(app.venv_dir.display()).dim()
     );
 }
 
@@ -165,9 +231,11 @@ where
 
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
-        ProgressStyle::with_template("{spinner:.cyan.bold} {prefix:.dim} {msg} {elapsed_precise:.dim}")
-            .expect("valid spinner template")
-            .tick_strings(tick_set),
+        ProgressStyle::with_template(
+            "{spinner:.cyan.bold} {prefix:.dim} {msg} {elapsed_precise:.dim}",
+        )
+        .expect("valid spinner template")
+        .tick_strings(tick_set),
     );
     spinner.enable_steady_tick(Duration::from_millis(90));
     spinner.set_prefix(format!("[{index}/{total}]"));
@@ -205,6 +273,27 @@ fn format_elapsed(duration: Duration) -> String {
         let secs = duration.as_secs() % 60;
         format!("{mins}m {secs}s")
     }
+}
+
+fn resolve_venv_path(venv: Option<PathBuf>) -> Result<(PathBuf, bool)> {
+    let venv_was_provided = venv.is_some();
+    let raw_path = venv.unwrap_or_else(|| PathBuf::from(".venv"));
+    let venv_dir = if raw_path.is_absolute() {
+        raw_path
+    } else {
+        std::env::current_dir()
+            .context("failed to resolve current directory for --venv")?
+            .join(raw_path)
+    };
+
+    if venv_dir.exists() && !venv_dir.is_dir() {
+        bail!(
+            "virtual environment path is not a directory: {}",
+            venv_dir.display()
+        );
+    }
+
+    Ok((venv_dir, venv_was_provided))
 }
 
 fn ensure_uv(app: &App) -> Result<()> {
@@ -312,9 +401,24 @@ fn prepend_path_dir(dir: &Path) -> Result<()> {
 }
 
 fn ensure_venv(app: &App) -> Result<()> {
-    if !Path::new(PYTHON_BIN).exists() {
+    let python_bin = app.python_bin();
+
+    if !python_bin.exists() {
+        if let Some(parent) = app.venv_dir.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create parent directory for venv: {}",
+                    parent.display()
+                )
+            })?;
+        }
+
         let mut command = Command::new("uv");
-        command.args(["venv", "--python", "3.12"]);
+        command
+            .arg("venv")
+            .arg("--python")
+            .arg("3.12")
+            .arg(&app.venv_dir);
         run_command(
             app,
             "create virtual environment",
@@ -326,7 +430,9 @@ fn ensure_venv(app: &App) -> Result<()> {
 }
 
 fn ensure_pip_tooling(app: &App) -> Result<()> {
-    let import_status = Command::new(PYTHON_BIN)
+    let python_bin = app.python_bin();
+
+    let import_status = Command::new(&python_bin)
         .args(["-c", "import pip"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -335,15 +441,14 @@ fn ensure_pip_tooling(app: &App) -> Result<()> {
 
     if !import_status.success() {
         let mut command = Command::new("uv");
-        command.args([
-            "pip",
-            "install",
-            "--python",
-            PYTHON_BIN,
-            "pip",
-            "setuptools<81",
-            "wheel",
-        ]);
+        command
+            .arg("pip")
+            .arg("install")
+            .arg("--python")
+            .arg(&python_bin)
+            .arg("pip")
+            .arg("setuptools<81")
+            .arg("wheel");
         run_command(app, "install pip tooling", command, OutputMode::Quiet)?;
     }
 
@@ -368,7 +473,8 @@ fn build_and_install_mmcv(app: &App) -> Result<()> {
 
         remove_dir_if_exists(".mmcv/.git")?;
 
-        let mut wheel = Command::new(PYTHON_BIN);
+        let python_bin = app.python_bin();
+        let mut wheel = Command::new(&python_bin);
         wheel.args([
             "-m",
             "pip",
@@ -384,18 +490,18 @@ fn build_and_install_mmcv(app: &App) -> Result<()> {
     }
 
     let mut install = Command::new("uv");
-    install.args([
-        "pip",
-        "install",
-        "-v",
-        "--python",
-        PYTHON_BIN,
-        "--no-deps",
-        "--no-index",
-        "--find-links",
-        WHEELHOUSE,
-        &format!("mmcv=={MMC_VERSION}"),
-    ]);
+    let python_bin = app.python_bin();
+    install
+        .arg("pip")
+        .arg("install")
+        .arg("-v")
+        .arg("--python")
+        .arg(&python_bin)
+        .arg("--no-deps")
+        .arg("--no-index")
+        .arg("--find-links")
+        .arg(WHEELHOUSE)
+        .arg(format!("mmcv=={MMC_VERSION}"));
     run_command(app, "install mmcv", install, OutputMode::Quiet)
 }
 
@@ -420,7 +526,8 @@ fn build_and_install_mmaction2(app: &App) -> Result<()> {
         patch_torch_load_single_line(".mmaction2/mmaction/apis/inference.py")?;
         patch_get_version_function(".mmaction2/setup.py", MMACTION_VERSION)?;
 
-        let mut wheel = Command::new(PYTHON_BIN);
+        let python_bin = app.python_bin();
+        let mut wheel = Command::new(&python_bin);
         wheel.args([
             "-m",
             "pip",
@@ -436,18 +543,18 @@ fn build_and_install_mmaction2(app: &App) -> Result<()> {
     }
 
     let mut install = Command::new("uv");
-    install.args([
-        "pip",
-        "install",
-        "-v",
-        "--python",
-        PYTHON_BIN,
-        "--no-deps",
-        "--no-index",
-        "--find-links",
-        WHEELHOUSE,
-        &format!("mmaction2=={MMACTION_VERSION}"),
-    ]);
+    let python_bin = app.python_bin();
+    install
+        .arg("pip")
+        .arg("install")
+        .arg("-v")
+        .arg("--python")
+        .arg(&python_bin)
+        .arg("--no-deps")
+        .arg("--no-index")
+        .arg("--find-links")
+        .arg(WHEELHOUSE)
+        .arg(format!("mmaction2=={MMACTION_VERSION}"));
     run_command(app, "install mmaction2", install, OutputMode::Quiet)
 }
 
@@ -472,7 +579,8 @@ fn build_and_install_mmengine(app: &App) -> Result<()> {
         patch_get_version_function(".mmengine/setup.py", MMENGINE_VERSION)?;
         patch_torch_load_single_line(".mmengine/mmengine/runner/checkpoint.py")?;
 
-        let mut wheel = Command::new(PYTHON_BIN);
+        let python_bin = app.python_bin();
+        let mut wheel = Command::new(&python_bin);
         wheel.args([
             "-m",
             "pip",
@@ -488,30 +596,37 @@ fn build_and_install_mmengine(app: &App) -> Result<()> {
     }
 
     let mut install = Command::new("uv");
-    install.args([
-        "pip",
-        "install",
-        "-v",
-        "--python",
-        PYTHON_BIN,
-        "--no-deps",
-        "--no-index",
-        "--find-links",
-        WHEELHOUSE,
-        &format!("mmengine=={MMENGINE_VERSION}"),
-    ]);
+    let python_bin = app.python_bin();
+    install
+        .arg("pip")
+        .arg("install")
+        .arg("-v")
+        .arg("--python")
+        .arg(&python_bin)
+        .arg("--no-deps")
+        .arg("--no-index")
+        .arg("--find-links")
+        .arg(WHEELHOUSE)
+        .arg(format!("mmengine=={MMENGINE_VERSION}"));
     run_command(app, "install mmengine", install, OutputMode::Quiet)
 }
 
 fn run_uv_sync(app: &App) -> Result<()> {
     let mut command = Command::new("uv");
     command.arg("sync");
+    let label = if app.venv_was_provided {
+        command.arg("--active");
+        command.env("VIRTUAL_ENV", &app.venv_dir);
+        "uv sync --active"
+    } else {
+        "uv sync"
+    };
     let mode = if app.debug {
         OutputMode::Stream
     } else {
         OutputMode::Stream
     };
-    run_command(app, "uv sync", command, mode)
+    run_command(app, label, command, mode)
 }
 
 fn run_command(app: &App, label: &str, mut command: Command, mode: OutputMode) -> Result<()> {
