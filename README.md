@@ -8,6 +8,14 @@ This is a installer helper for the following libraries in a `uv` python project.
 
 It builds local wheels into `.wheelhouse`, installs from that local wheelhouse, and runs `uv sync` at the end.
 
+## Project layout
+
+The Rust CLI is split into small modules:
+
+- `src/main.rs` parses CLI args and starts the setup flow.
+- `src/installer.rs` owns the install steps, package versions, and wheel builds.
+- `src/command.rs`, `src/ui.rs`, `src/fs_utils.rs`, and `src/patches.rs` contain the shared command, progress, filesystem, and source-patching helpers.
+
 ## What it does
 
 The CLI follows the same high-level flow as `setup.sh`:
@@ -51,6 +59,13 @@ Binary path:
 
 ```bash
 target/release/setup
+```
+
+For development checks:
+
+```bash
+cargo fmt --check
+cargo check
 ```
 
 ## Usage
