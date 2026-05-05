@@ -17,7 +17,7 @@ const MMENGINE_VERSION: &str = "0.10.7";
 const WHEELHOUSE: &str = ".wheelhouse";
 
 pub(crate) fn run_setup(app: &App, purge: bool) -> Result<()> {
-    let total_steps = if purge { 9 } else { 8 };
+    let total_steps = if purge { 10 } else { 9 };
     let mut step = 1;
 
     print_header(app);
@@ -95,6 +95,15 @@ pub(crate) fn run_setup(app: &App, purge: bool) -> Result<()> {
     run_step(step, total_steps, "Running uv sync", true, || {
         run_uv_sync(app)
     })?;
+    step += 1;
+
+    run_step(
+        step,
+        total_steps,
+        "Installing pre-commit hook",
+        app.debug,
+        || install_pre_commit_hook(app),
+    )?;
 
     println!(
         "{} {}",
@@ -433,4 +442,36 @@ fn run_uv_sync(app: &App) -> Result<()> {
         "uv sync"
     };
     run_command(app, label, command, OutputMode::Stream)
+}
+
+fn install_pre_commit_hook(app: &App) -> Result<()> {
+    run_command(
+        app,
+        "uv tool run pre-commit install",
+        pre_commit_install_command(),
+        OutputMode::Quiet,
+    )
+}
+
+fn pre_commit_install_command() -> Command {
+    let mut command = Command::new("uv");
+    command.args(["tool", "run", "pre-commit", "install"]);
+    command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_direct_pre_commit_install_command() {
+        let command = pre_commit_install_command();
+
+        assert_eq!(command.get_program(), "uv");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, ["tool", "run", "pre-commit", "install"]);
+    }
 }

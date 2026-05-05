@@ -6,7 +6,7 @@ This is a installer helper for the following libraries in a `uv` python project.
 - `mmaction2==1.2.0`
 - `mmengine==0.10.7`
 
-It builds local wheels into `.wheelhouse`, installs from that local wheelhouse, and runs `uv sync` at the end.
+It builds local wheels into `.wheelhouse`, installs from that local wheelhouse, runs `uv sync`, and installs the local pre-commit hook.
 
 ## Project layout
 
@@ -28,6 +28,7 @@ The CLI follows the same high-level flow as `setup.sh`:
    - If a matching wheel is missing in `.wheelhouse`, shallow-clones the tagged repo and builds a wheel.
    - Installs from `.wheelhouse` with `uv pip install --no-index --find-links`.
 6. Runs `uv sync` by default, or `uv sync --active` when `--venv` is provided.
+7. Installs the local pre-commit hook with `uv tool run pre-commit install`.
 
 ## Output behavior
 
