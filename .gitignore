@@ -1,1 +1,15 @@
 /target
+
+# Local AI assistant configuration and memory
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.agents/
+.codex/
+.claude/
+.cursor/
+.windsurf/
+.continue/
+.aider.conf.yml
+.aiderignore
+.cursorrules
