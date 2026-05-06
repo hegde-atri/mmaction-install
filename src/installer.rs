@@ -16,8 +16,8 @@ const MMACTION_VERSION: &str = "1.2.0";
 const MMENGINE_VERSION: &str = "0.10.7";
 const WHEELHOUSE: &str = ".wheelhouse";
 
-pub(crate) fn run_setup(app: &App, purge: bool) -> Result<()> {
-    let total_steps = if purge { 10 } else { 9 };
+pub(crate) fn run_setup(app: &App, purge: bool, skip_pre_commit_install: bool) -> Result<()> {
+    let total_steps = total_setup_steps(purge, skip_pre_commit_install);
     let mut step = 1;
 
     print_header(app);
@@ -32,6 +32,20 @@ pub(crate) fn run_setup(app: &App, purge: bool) -> Result<()> {
         )?;
         step += 1;
     }
+
+    let mut env_file_status = None;
+    run_step(
+        step,
+        total_steps,
+        "Ensuring project .env file",
+        app.debug,
+        || {
+            env_file_status = Some(ensure_project_env_file(".")?);
+            Ok(())
+        },
+    )?;
+    print_env_file_notice(env_file_status.expect(".env step stores a status"));
+    step += 1;
 
     run_step(
         step,
@@ -97,13 +111,15 @@ pub(crate) fn run_setup(app: &App, purge: bool) -> Result<()> {
     })?;
     step += 1;
 
-    run_step(
-        step,
-        total_steps,
-        "Installing pre-commit hook",
-        app.debug,
-        || install_pre_commit_hook(app),
-    )?;
+    if !skip_pre_commit_install {
+        run_step(
+            step,
+            total_steps,
+            "Installing pre-commit hook",
+            app.debug,
+            || install_pre_commit_hook(app),
+        )?;
+    }
 
     println!(
         "{} {}",
@@ -114,6 +130,69 @@ pub(crate) fn run_setup(app: &App, purge: bool) -> Result<()> {
     );
 
     Ok(())
+}
+
+fn total_setup_steps(purge: bool, skip_pre_commit_install: bool) -> usize {
+    9 + usize::from(purge) + usize::from(!skip_pre_commit_install)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum EnvFileStatus {
+    Copied,
+    Skipped,
+}
+
+fn ensure_project_env_file(project_dir: impl AsRef<Path>) -> Result<EnvFileStatus> {
+    let project_dir = project_dir.as_ref();
+    let env_file = project_dir.join(".env");
+
+    if env_file.exists() {
+        return Ok(EnvFileStatus::Skipped);
+    }
+
+    let env_example = project_dir.join(".env.example");
+    fs::copy(&env_example, &env_file).with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            env_example.display(),
+            env_file.display()
+        )
+    })?;
+
+    Ok(EnvFileStatus::Copied)
+}
+
+fn print_env_file_notice(status: EnvFileStatus) {
+    let border = console::style("!".repeat(72)).yellow().bold();
+    println!();
+    println!("{border}");
+    match status {
+        EnvFileStatus::Copied => {
+            println!(
+                "{} {}",
+                console::style("Environment file created:").yellow().bold(),
+                console::style("copied .env.example to .env").yellow()
+            );
+            println!(
+                "{}",
+                console::style(
+                    "Review .env and change values as necessary before running the app."
+                )
+                .yellow()
+            );
+        }
+        EnvFileStatus::Skipped => {
+            println!(
+                "{} {}",
+                console::style("Environment file step skipped:")
+                    .dim()
+                    .bold(),
+                console::style(".env already exists").dim()
+            );
+        }
+    }
+    println!("{border}");
+    println!();
 }
 
 fn ensure_uv(app: &App) -> Result<()> {
@@ -451,6 +530,11 @@ fn install_pre_commit_hook(app: &App) -> Result<()> {
         pre_commit_install_command(),
         OutputMode::Quiet,
     )
+    .map_err(pre_commit_install_error_context)
+}
+
+fn pre_commit_install_error_context(error: anyhow::Error) -> anyhow::Error {
+    error.context("failed to install pre-commit hook, run make pre-commit-install")
 }
 
 fn pre_commit_install_command() -> Command {
@@ -462,6 +546,20 @@ fn pre_commit_install_command() -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_project_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time after unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "mmaction-install-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create temp project dir");
+        dir
+    }
 
     #[test]
     fn builds_direct_pre_commit_install_command() {
@@ -473,5 +571,58 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert_eq!(args, ["tool", "run", "pre-commit", "install"]);
+    }
+
+    #[test]
+    fn pre_commit_install_failure_context_includes_make_target_hint() {
+        let error = pre_commit_install_error_context(anyhow::anyhow!("pre-commit failed"));
+
+        assert_eq!(
+            format!("{error:#}"),
+            "failed to install pre-commit hook, run make pre-commit-install: pre-commit failed"
+        );
+    }
+
+    #[test]
+    fn setup_steps_exclude_pre_commit_install_when_skipped() {
+        assert_eq!(total_setup_steps(false, false), 10);
+        assert_eq!(total_setup_steps(false, true), 9);
+        assert_eq!(total_setup_steps(true, false), 11);
+        assert_eq!(total_setup_steps(true, true), 10);
+    }
+
+    #[test]
+    fn copies_env_example_when_env_is_missing() {
+        let project_dir = temp_project_dir("copy-env");
+        fs::write(project_dir.join(".env.example"), "TOKEN=change-me\n")
+            .expect("write env example");
+
+        let result = ensure_project_env_file(&project_dir).expect("ensure .env file");
+
+        assert_eq!(result, EnvFileStatus::Copied);
+        assert_eq!(
+            fs::read_to_string(project_dir.join(".env")).expect("read copied env"),
+            "TOKEN=change-me\n"
+        );
+
+        fs::remove_dir_all(project_dir).expect("cleanup temp project dir");
+    }
+
+    #[test]
+    fn skips_env_copy_when_env_already_exists() {
+        let project_dir = temp_project_dir("skip-env");
+        fs::write(project_dir.join(".env.example"), "TOKEN=from-example\n")
+            .expect("write env example");
+        fs::write(project_dir.join(".env"), "TOKEN=existing\n").expect("write env");
+
+        let result = ensure_project_env_file(&project_dir).expect("ensure .env file");
+
+        assert_eq!(result, EnvFileStatus::Skipped);
+        assert_eq!(
+            fs::read_to_string(project_dir.join(".env")).expect("read env"),
+            "TOKEN=existing\n"
+        );
+
+        fs::remove_dir_all(project_dir).expect("cleanup temp project dir");
     }
 }

@@ -28,7 +28,7 @@ The CLI follows the same high-level flow as `setup.sh`:
    - If a matching wheel is missing in `.wheelhouse`, shallow-clones the tagged repo and builds a wheel.
    - Installs from `.wheelhouse` with `uv pip install --no-index --find-links`.
 6. Runs `uv sync` by default, or `uv sync --active` when `--venv` is provided.
-7. Installs the local pre-commit hook with `uv tool run pre-commit install`.
+7. Installs the local pre-commit hook with `uv tool run pre-commit install` unless `--skip-pre-commit-install` is provided.
 
 ## Output behavior
 
@@ -93,6 +93,12 @@ Use both flags together:
 
 ```bash
 ./target/release/setup --purge --debug
+```
+
+Skip pre-commit hook installation, for example in CI/CD:
+
+```bash
+./target/release/setup --skip-pre-commit-install
 ```
 
 Use a custom virtual environment path (relative or absolute):

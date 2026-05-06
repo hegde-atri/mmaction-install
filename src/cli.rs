@@ -26,8 +26,27 @@ pub(crate) struct Cli {
 
     #[arg(
         long,
+        default_value_t = false,
+        help = "Skip installing the local pre-commit hook"
+    )]
+    pub(crate) skip_pre_commit_install: bool,
+
+    #[arg(
+        long,
         value_name = "PATH",
         help = "Virtual environment path for uv (relative or absolute)"
     )]
     pub(crate) venv: Option<PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_skip_pre_commit_install_flag() {
+        let cli = Cli::try_parse_from(["setup", "--skip-pre-commit-install"]).unwrap();
+
+        assert!(cli.skip_pre_commit_install);
+    }
 }
