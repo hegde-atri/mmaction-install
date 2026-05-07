@@ -24,5 +24,10 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
     let app = App::from_venv(cli.debug, cli.venv)?;
 
-    installer::run_setup(&app, cli.purge, cli.skip_pre_commit_install)
+    installer::run_setup(
+        &app,
+        cli.purge,
+        cli.skip_pre_commit_install,
+        cli.skip_env_file,
+    )
 }

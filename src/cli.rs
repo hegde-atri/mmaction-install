@@ -33,6 +33,13 @@ pub(crate) struct Cli {
 
     #[arg(
         long,
+        default_value_t = false,
+        help = "Skip creating the project .env file"
+    )]
+    pub(crate) skip_env_file: bool,
+
+    #[arg(
+        long,
         value_name = "PATH",
         help = "Virtual environment path for uv (relative or absolute)"
     )]
@@ -48,5 +55,12 @@ mod tests {
         let cli = Cli::try_parse_from(["setup", "--skip-pre-commit-install"]).unwrap();
 
         assert!(cli.skip_pre_commit_install);
+    }
+
+    #[test]
+    fn parses_skip_env_file_flag() {
+        let cli = Cli::try_parse_from(["setup", "--skip-env-file"]).unwrap();
+
+        assert!(cli.skip_env_file);
     }
 }

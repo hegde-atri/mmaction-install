@@ -16,8 +16,13 @@ const MMACTION_VERSION: &str = "1.2.0";
 const MMENGINE_VERSION: &str = "0.10.7";
 const WHEELHOUSE: &str = ".wheelhouse";
 
-pub(crate) fn run_setup(app: &App, purge: bool, skip_pre_commit_install: bool) -> Result<()> {
-    let total_steps = total_setup_steps(purge, skip_pre_commit_install);
+pub(crate) fn run_setup(
+    app: &App,
+    purge: bool,
+    skip_pre_commit_install: bool,
+    skip_env_file: bool,
+) -> Result<()> {
+    let total_steps = total_setup_steps(purge, skip_pre_commit_install, skip_env_file);
     let mut step = 1;
 
     print_header(app);
@@ -34,18 +39,19 @@ pub(crate) fn run_setup(app: &App, purge: bool, skip_pre_commit_install: bool) -
     }
 
     let mut env_file_status = None;
-    run_step(
-        step,
-        total_steps,
-        "Ensuring project .env file",
-        app.debug,
-        || {
-            env_file_status = Some(ensure_project_env_file(".")?);
-            Ok(())
-        },
-    )?;
-    print_env_file_notice(env_file_status.expect(".env step stores a status"));
-    step += 1;
+    if !skip_env_file {
+        run_step(
+            step,
+            total_steps,
+            "Ensuring project .env file",
+            app.debug,
+            || {
+                env_file_status = Some(ensure_project_env_file(".")?);
+                Ok(())
+            },
+        )?;
+        step += 1;
+    }
 
     run_step(
         step,
@@ -121,6 +127,10 @@ pub(crate) fn run_setup(app: &App, purge: bool, skip_pre_commit_install: bool) -
         )?;
     }
 
+    if let Some(status) = env_file_status {
+        print_env_file_notice(status);
+    }
+
     println!(
         "{} {}",
         console::style("✔").green().bold(),
@@ -132,8 +142,8 @@ pub(crate) fn run_setup(app: &App, purge: bool, skip_pre_commit_install: bool) -
     Ok(())
 }
 
-fn total_setup_steps(purge: bool, skip_pre_commit_install: bool) -> usize {
-    9 + usize::from(purge) + usize::from(!skip_pre_commit_install)
+fn total_setup_steps(purge: bool, skip_pre_commit_install: bool, skip_env_file: bool) -> usize {
+    8 + usize::from(purge) + usize::from(!skip_pre_commit_install) + usize::from(!skip_env_file)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -584,11 +594,13 @@ mod tests {
     }
 
     #[test]
-    fn setup_steps_exclude_pre_commit_install_when_skipped() {
-        assert_eq!(total_setup_steps(false, false), 10);
-        assert_eq!(total_setup_steps(false, true), 9);
-        assert_eq!(total_setup_steps(true, false), 11);
-        assert_eq!(total_setup_steps(true, true), 10);
+    fn setup_steps_exclude_optional_steps_when_skipped() {
+        assert_eq!(total_setup_steps(false, false, false), 10);
+        assert_eq!(total_setup_steps(false, true, false), 9);
+        assert_eq!(total_setup_steps(false, false, true), 9);
+        assert_eq!(total_setup_steps(false, true, true), 8);
+        assert_eq!(total_setup_steps(true, false, false), 11);
+        assert_eq!(total_setup_steps(true, true, true), 9);
     }
 
     #[test]

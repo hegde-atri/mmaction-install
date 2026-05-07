@@ -20,15 +20,16 @@ The Rust CLI is split into small modules:
 
 The CLI follows the same high-level flow as `setup.sh`:
 
-1. Creates `.wheelhouse` if missing.
-2. Ensures `uv` is installed (auto-installs via official installer if missing).
-3. Creates a virtual environment with Python 3.12 if `<venv>/bin/python` does not exist (`<venv>` defaults to `.venv`).
-4. Ensures `pip`, `setuptools<81`, and `wheel` are available in the venv.
-5. For each package (`mmcv`, `mmaction2`, `mmengine`):
+1. Ensures `.env` exists by copying `.env.example` unless `--skip-env-file` is provided.
+2. Creates `.wheelhouse` if missing.
+3. Ensures `uv` is installed (auto-installs via official installer if missing).
+4. Creates a virtual environment with Python 3.12 if `<venv>/bin/python` does not exist (`<venv>` defaults to `.venv`).
+5. Ensures `pip`, `setuptools<81`, and `wheel` are available in the venv.
+6. For each package (`mmcv`, `mmaction2`, `mmengine`):
    - If a matching wheel is missing in `.wheelhouse`, shallow-clones the tagged repo and builds a wheel.
    - Installs from `.wheelhouse` with `uv pip install --no-index --find-links`.
-6. Runs `uv sync` by default, or `uv sync --active` when `--venv` is provided.
-7. Installs the local pre-commit hook with `uv tool run pre-commit install` unless `--skip-pre-commit-install` is provided.
+7. Runs `uv sync` by default, or `uv sync --active` when `--venv` is provided.
+8. Installs the local pre-commit hook with `uv tool run pre-commit install` unless `--skip-pre-commit-install` is provided.
 
 ## Output behavior
 
@@ -99,6 +100,12 @@ Skip pre-commit hook installation, for example in CI/CD:
 
 ```bash
 ./target/release/setup --skip-pre-commit-install
+```
+
+Skip project `.env` file creation, for example in CI/CD:
+
+```bash
+./target/release/setup --skip-env-file
 ```
 
 Use a custom virtual environment path (relative or absolute):
